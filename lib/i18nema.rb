@@ -1,4 +1,5 @@
 require 'i18n'
+require File.dirname(__FILE__) + '/i18nema/core_ext/hash'
 require File.dirname(__FILE__) + '/i18nema/i18nema'
 
 module I18nema
@@ -6,11 +7,9 @@ module I18nema
     include I18n::Backend::Base
 
     def store_translations(locale, data, options = {})
-    end
-
-    def available_locales
-      init_translations unless initialized?
-      I18nema.available_locales.map(&:to_sym)
+      # TODO: make this moar awesome
+      @initialized = true
+      load_yml_string({locale => data}.deep_stringify_keys.to_yaml)
     end
 
   protected
@@ -21,7 +20,7 @@ module I18nema
     end
 
     def load_yml(filename)
-      I18nema.load_yml_string File.read(filename)
+      load_yml_string File.read(filename)
     end
 
     def initialized?
@@ -31,8 +30,7 @@ module I18nema
     def lookup(locale, key, scope = [], options = {})
       init_translations unless initialized?
       keys = I18n.normalize_keys(locale, key, scope, options[:separator])
-      puts keys.inspect
-      I18nema.direct_lookup(*keys)
+      direct_lookup(*keys)
     end
 
     def init_translations

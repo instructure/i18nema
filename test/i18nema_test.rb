@@ -4,59 +4,49 @@ require 'yaml'
 class I18nemaTest < Test::Unit::TestCase
   def setup
     @data = {
-      "en" => {
-        "foo" => {
-          "bar" => "lol"
-        },
-        "baz" => %w{
-          asdf
-          qwerty
-        }
+      foo: {
+        bar: "lol"
+      },
+      baz: %w{
+        asdf
+        qwerty
       }
-    }
-    I18nema.load_yml_string @data.to_yaml
-  end
-
-  def teardown
-    I18nema.reset!
+    }.deep_stringify_keys
+    @backend = I18nema::Backend.new
+    @backend.store_translations :en, @data
   end
 
   def test_yaml_parity
-    assert_equal @data, I18nema.direct_lookup
+    assert_equal({"en" => @data}, @backend.direct_lookup)
   end
 
   def test_scoping
     assert_equal({"bar" => "lol"},
-                 I18nema.direct_lookup("en", "foo"))
+                 @backend.direct_lookup("en", "foo"))
     assert_equal "lol",
-                 I18nema.direct_lookup("en", "foo", "bar")
+                 @backend.direct_lookup("en", "foo", "bar")
     assert_equal nil,
-                 I18nema.direct_lookup("poo")
+                 @backend.direct_lookup("poo")
   end
 
   def test_merging
-    I18nema.load_yml_string({
-      "en" => {
-        "foo" => "replaced!",
-        "wat" => "added!"
-      }
-    }.to_yaml)
+    @backend.store_translations :en, foo: "replaced!", wat: "added!"
     assert_equal "replaced!",
-                 I18nema.direct_lookup("en", "foo")
+                 @backend.direct_lookup("en", "foo")
     assert_equal ["asdf", "qwerty"],
-                 I18nema.direct_lookup("en", "baz")
+                 @backend.direct_lookup("en", "baz")
     assert_equal "added!",
-                 I18nema.direct_lookup("en", "wat")
+                 @backend.direct_lookup("en", "wat")
   end
 
-  def test_reset
-    I18nema.reset!
-    assert_equal I18nema.direct_lookup, nil
+  def test_reload
+    @backend.reload!
+    assert_equal({}, @backend.direct_lookup)
   end
 
   def test_available_locales
-    I18nema.load_yml_string("es:\n  foo: hola")
+    @backend.store_translations :es, foo: "hola"
     assert_equal ['en', 'es'],
-                 I18nema.available_locales.sort
+                 @backend.available_locales.map(&:to_s).sort
   end
 end

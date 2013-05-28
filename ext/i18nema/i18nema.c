@@ -2,15 +2,16 @@
 #include "syck.h"
 #include "uthash.h"
 
-VALUE I18nema = Qnil;
+VALUE I18nema = Qnil,
+      I18nemaBackend = Qnil;
 
 struct i_object;
 struct i_key_value;
 static VALUE array_to_rarray(struct i_object *array);
 static VALUE hash_to_rhash(struct i_object *hash);
 static void merge_hash(struct i_object *hash, struct i_object *other_hash);
-static void delete_hash(struct i_key_value *hash);
-
+static void delete_hash(struct i_key_value **hash);
+static void delete_object(struct i_object *object);
 
 enum i_object_type {
   i_type_string,
@@ -38,13 +39,7 @@ typedef struct i_key_value
   UT_hash_handle hh;
 } i_key_value_t;
 
-/*
- * currently there is just a single translations object
- * TODO: support multiple (i.e. one per backend instance)
- */
-i_object_t *translations = NULL;
 int current_translation_count = 0;
-int total_translation_count = 0;
 
 static VALUE
 i_object_to_robject(i_object_t *object) {
@@ -80,20 +75,30 @@ hash_to_rhash(i_object_t *hash)
   return result;
 }
 
+static i_object_t*
+root_object_get(VALUE self)
+{
+  i_object_t *root_object;
+  VALUE translations;
+  translations = rb_iv_get(self, "@translations");
+  Data_Get_Struct(translations, i_object_t, root_object);
+  return root_object;
+}
+
 /*
  *  call-seq:
- *     I18nema.direct_lookup([part]+)  -> localized_str
+ *     backend.direct_lookup([part]+)  -> localized_str
  *
  *  Returns the translation(s) found under the specified key.
  *
- *     I18nema.direct_lookup("en", "foo", "bar")   #=> "lol"
- *     I18nema.direct_lookup("en", "foo")          #=> {"bar"=>"lol", "baz"=>["asdf", "qwerty"]}
+ *     backend.direct_lookup("en", "foo", "bar")   #=> "lol"
+ *     backend.direct_lookup("en", "foo")          #=> {"bar"=>"lol", "baz"=>["asdf", "qwerty"]}
  */
 
 static VALUE
-direct_lookup(int argc, VALUE *argv)
+direct_lookup(int argc, VALUE *argv, VALUE self)
 {
-  i_object_t *result = translations;
+  i_object_t *result = root_object_get(self);;
   i_key_value_t *kv = NULL;
   char *s;
 
@@ -107,7 +112,7 @@ direct_lookup(int argc, VALUE *argv)
 }
 
 static void
-delete_object(i_object_t *object)
+empty_object(i_object_t *object)
 {
   if (object == NULL)
     return;
@@ -122,9 +127,15 @@ delete_object(i_object_t *object)
     free(object->data.array);
     break;
   case i_type_hash:
-    delete_hash(object->data.hash);
+    delete_hash(&object->data.hash);
     break;
   }
+}
+
+static void
+delete_object(i_object_t *object)
+{
+  empty_object(object);
   free(object);
 }
 
@@ -138,10 +149,11 @@ delete_key_value(i_key_value_t *kv, int delete_value)
 }
 
 static void
-delete_hash(i_key_value_t *hash)
+delete_hash(i_key_value_t **hash)
 {
   i_key_value_t *kv, *tmp;
-  HASH_ITER(hh, hash, kv, tmp) {
+  HASH_ITER(hh, *hash, kv, tmp) {
+    HASH_DEL(*hash, kv);
     delete_key_value(kv, 1);
   }
 }
@@ -185,7 +197,7 @@ handle_syck_node(SyckParser *parser, SyckNode *node)
 
   switch (node->kind) {
   case syck_str_kind:
-    // TODO: why are there sometimes empty string nodes (memory leak, since they never get used)
+    // TODO: why does syck sometimes give us empty string nodes? (small) memory leak, since they never end up in a seq/map
     result->type = i_type_string;
     result->size = node->data.str->len;
     result->data.string = malloc(node->data.str->len + 1);
@@ -208,7 +220,6 @@ handle_syck_node(SyckParser *parser, SyckNode *node)
     break;
   case syck_map_kind:
     result->type = i_type_hash;
-    result->size = node->data.pairs->idx;
     result->data.hash = NULL;
     for (long i = 0; i < node->data.pairs->idx; i++) {
       i_object_t *key = NULL, *value = NULL;
@@ -236,19 +247,20 @@ handle_syck_node(SyckParser *parser, SyckNode *node)
 
 /*
  *  call-seq:
- *     I18nema.load_yaml_string(yaml_str) -> num_translations
+ *     backend.load_yaml_string(yaml_str) -> num_translations
  *
  *  Loads translations from the specified yaml string, and returns the
  *  number of (new) translations stored.
  *
- *     I18nema.load_yaml_string("en:\n  foo: bar")   #=> 1
+ *     backend.load_yaml_string("en:\n  foo: bar")   #=> 1
  */
 
 static VALUE
 load_yml_string(VALUE self, VALUE yml)
 {
   SYMID oid;
-  i_object_t *current_translations = NULL;
+  i_object_t *root_object = root_object_get(self);
+  i_object_t *new_root_object = NULL;
   current_translation_count = 0;
   SyckParser* parser = syck_new_parser();
   syck_parser_handler(parser, handle_syck_node);
@@ -259,62 +271,76 @@ load_yml_string(VALUE self, VALUE yml)
   //syck_parser_error_handler(parser, syck_error_handler);
 
   oid = syck_parse(parser);
-  syck_lookup_sym(parser, oid, (char **)&current_translations);
+  syck_lookup_sym(parser, oid, (char **)&new_root_object);
   syck_free_parser(parser);
-  if (translations == NULL)
-    translations = current_translations;
-  else
-    merge_hash(translations, current_translations);
-  total_translation_count += current_translation_count;
+  merge_hash(root_object, new_root_object);
 
   return INT2NUM(current_translation_count);
 }
 
 /*
  *  call-seq:
- *     I18nema.available_locales -> locales
+ *     backend.available_locales -> locales
  *
  *  Returns the currently loaded locales. Order is not guaranteed.
  *
- *     I18nema.available_locales   #=> ["en", "es"]
+ *     backend.available_locales   #=> [:en, :es]
  */
 
 static VALUE
-available_locales()
+available_locales(VALUE self)
 {
-  i_key_value_t *current = translations->data.hash;
+  if (!rb_iv_get(self, "@initialized"))
+    rb_funcall(self, rb_intern("init_translations"), 0);
+  i_object_t *root_object = root_object_get(self);
+  i_key_value_t *current = root_object->data.hash;
   VALUE ary = rb_ary_new2(0);
 
   for (; current != NULL; current = current->hh.next)
-    rb_ary_push(ary, rb_str_new2(current->key));
+    rb_ary_push(ary, rb_str_intern(rb_str_new2(current->key)));
 
   return ary;
 }
 
 /*
  *  call-seq:
- *     I18nema.reset! -> true
+ *     backend.reload! -> true
  *
  *  Clears out all currently stored translations.
  *
- *     I18nema.reset!   #=> true
+ *     backend.reload!   #=> true
  */
 
 static VALUE
-reset()
+reload(VALUE self)
 {
-  delete_object(translations);
-  translations = NULL;
-  total_translation_count = 0;
+  i_object_t *root_object = root_object_get(self);
+  empty_object(root_object);
+  rb_iv_set(self, "@initialized", Qfalse);
+  root_object = NULL;
   return Qtrue;
+}
+
+static VALUE
+initialize(VALUE self)
+{
+  VALUE translations;
+  i_object_t *root_object = malloc(sizeof(i_object_t));
+  root_object->type = i_type_hash;
+  root_object->data.hash = NULL;
+  translations = Data_Wrap_Struct(I18nemaBackend, 0, delete_object, root_object);
+  rb_iv_set(self, "@translations", translations);
+  return self;
 }
 
 void
 Init_i18nema()
 {
   I18nema = rb_define_module("I18nema");
-  rb_define_singleton_method(I18nema, "direct_lookup", direct_lookup, -1);
-  rb_define_singleton_method(I18nema, "load_yml_string", load_yml_string, 1);
-  rb_define_singleton_method(I18nema, "available_locales", available_locales, 0);
-  rb_define_singleton_method(I18nema, "reset!", reset, 0);
+  I18nemaBackend = rb_define_class_under(I18nema, "Backend", rb_cObject);
+  rb_define_method(I18nemaBackend, "initialize", initialize, 0);
+  rb_define_method(I18nemaBackend, "load_yml_string", load_yml_string, 1);
+  rb_define_method(I18nemaBackend, "available_locales", available_locales, 0);
+  rb_define_method(I18nemaBackend, "reload!", reload, 0);
+  rb_define_method(I18nemaBackend, "direct_lookup", direct_lookup, -1);
 }
