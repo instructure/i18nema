@@ -3,7 +3,8 @@
 #include "uthash.h"
 
 VALUE I18nema = Qnil,
-      I18nemaBackend = Qnil;
+      I18nemaBackend = Qnil,
+      I18nemaBackendLoadError = Qnil;
 
 struct i_object;
 struct i_key_value;
@@ -188,6 +189,36 @@ merge_hash(i_object_t *hash, i_object_t *other_hash)
   delete_object(other_hash);
 }
 
+static int
+delete_syck_object(char *key, char *value, char *arg)
+{
+  i_object_t *object = (i_object_t *)value;
+  delete_object(object);
+  return ST_DELETE;
+}
+
+static void
+handle_syck_error(SyckParser *parser, const char *str)
+{
+  char *endl = parser->cursor;
+  while (*endl != '\0' && *endl != '\n')
+    endl++;
+  endl[0] = '\0';
+
+  if (parser->syms)
+    st_foreach(parser->syms, delete_syck_object, 0);
+  rb_raise(I18nemaBackendLoadError, "%s on line %d, col %ld: `%s'", str, parser->linect + 1, parser->cursor - parser->lineptr, parser->lineptr);
+}
+
+static SyckNode*
+handle_syck_badanchor(SyckParser *parser, const char *anchor)
+{
+  char error[strlen(anchor) + 14];
+  sprintf(error, "bad anchor `%s'", anchor);
+  handle_syck_error(parser, error);
+  return NULL;
+}
+
 static SYMID
 handle_syck_node(SyckParser *parser, SyckNode *node)
 {
@@ -266,13 +297,16 @@ load_yml_string(VALUE self, VALUE yml)
   syck_parser_handler(parser, handle_syck_node);
   StringValue(yml);
   syck_parser_str(parser, RSTRING_PTR(yml), RSTRING_LEN(yml), NULL);
-  // TODO: implement these
-  //syck_parser_bad_anchor_handler(parser, syck_badanchor_handler);
-  //syck_parser_error_handler(parser, syck_error_handler);
+  syck_parser_bad_anchor_handler(parser, handle_syck_badanchor);
+  syck_parser_error_handler(parser, handle_syck_error);
 
   oid = syck_parse(parser);
   syck_lookup_sym(parser, oid, (char **)&new_root_object);
   syck_free_parser(parser);
+  if (new_root_object == NULL || new_root_object->type != i_type_hash) {
+    delete_object(new_root_object);
+    rb_raise(I18nemaBackendLoadError, "root yml node is not a hash");
+  }
   merge_hash(root_object, new_root_object);
 
   return INT2NUM(current_translation_count);
@@ -338,6 +372,7 @@ Init_i18nema()
 {
   I18nema = rb_define_module("I18nema");
   I18nemaBackend = rb_define_class_under(I18nema, "Backend", rb_cObject);
+  I18nemaBackendLoadError = rb_define_class_under(I18nemaBackend, "LoadError", rb_eStandardError);
   rb_define_method(I18nemaBackend, "initialize", initialize, 0);
   rb_define_method(I18nemaBackend, "load_yml_string", load_yml_string, 1);
   rb_define_method(I18nemaBackend, "available_locales", available_locales, 0);

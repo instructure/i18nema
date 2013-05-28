@@ -49,4 +49,26 @@ class I18nemaTest < Test::Unit::TestCase
     assert_equal ['en', 'es'],
                  @backend.available_locales.map(&:to_s).sort
   end
+
+  def test_invalid_yml
+    backend = I18nema::Backend.new
+
+    exception = assert_raise(I18nema::Backend::LoadError) {
+      backend.load_yml_string("string")
+    }
+    assert_equal("root yml node is not a hash", exception.message)
+    assert_equal({}, backend.direct_lookup)
+
+    exception = assert_raise(I18nema::Backend::LoadError) {
+      backend.load_yml_string("en:\n  foo: \"lol\"\n\tbar: notabs!")
+    }
+    assert_match(/TAB found in your indentation/, exception.message)
+    assert_equal({}, backend.direct_lookup)
+
+    exception = assert_raise(I18nema::Backend::LoadError) {
+      backend.load_yml_string("en:\n  &a [*a]")
+    }
+    assert_match(/bad anchor `a'/, exception.message)
+    assert_equal({}, backend.direct_lookup)
+  end
 end
