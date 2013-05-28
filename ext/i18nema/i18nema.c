@@ -119,12 +119,12 @@ empty_object(i_object_t *object)
 
   switch (object->type) {
   case i_type_string:
-    free(object->data.string);
+    xfree(object->data.string);
     break;
   case i_type_array:
     for (unsigned long i = 0; i < object->size; i++)
       delete_object(object->data.array[i]);
-    free(object->data.array);
+    xfree(object->data.array);
     break;
   case i_type_hash:
     delete_hash(&object->data.hash);
@@ -136,7 +136,7 @@ static void
 delete_object(i_object_t *object)
 {
   empty_object(object);
-  free(object);
+  xfree(object);
 }
 
 static void
@@ -144,8 +144,8 @@ delete_key_value(i_key_value_t *kv, int delete_value)
 {
   if (delete_value)
     delete_object(kv->value);
-  free(kv->key);
-  free(kv);
+  xfree(kv->key);
+  xfree(kv);
 }
 
 static void
@@ -192,7 +192,7 @@ static SYMID
 handle_syck_node(SyckParser *parser, SyckNode *node)
 {
   i_object_t *result;
-  result = malloc(sizeof(i_object_t));
+  result = ALLOC(i_object_t);
   SYMID oid;
 
   switch (node->kind) {
@@ -200,14 +200,14 @@ handle_syck_node(SyckParser *parser, SyckNode *node)
     // TODO: why does syck sometimes give us empty string nodes? (small) memory leak, since they never end up in a seq/map
     result->type = i_type_string;
     result->size = node->data.str->len;
-    result->data.string = malloc(node->data.str->len + 1);
+    result->data.string = xmalloc(node->data.str->len + 1);
     strncpy(result->data.string, node->data.str->ptr, node->data.str->len);
     result->data.string[node->data.str->len] = '\0';
     break;
   case syck_seq_kind:
     result->type = i_type_array;
     result->size = node->data.list->idx;
-    result->data.array = malloc(node->data.list->idx * sizeof(i_object_t*));
+    result->data.array = ALLOC_N(i_object_t*, node->data.list->idx);
     for (long i = 0; i < node->data.list->idx; i++) {
       i_object_t *item = NULL;
 
@@ -230,9 +230,9 @@ handle_syck_node(SyckParser *parser, SyckNode *node)
       syck_lookup_sym(parser, oid, (char **)&value);
 
       i_key_value_t *kv;
-      kv = malloc(sizeof(*kv));
+      kv = ALLOC(i_key_value_t);
       kv->key = key->data.string;
-      free(key);
+      xfree(key);
       kv->value = value;
       if (value->type == i_type_string)
         current_translation_count++;
@@ -325,7 +325,7 @@ static VALUE
 initialize(VALUE self)
 {
   VALUE translations;
-  i_object_t *root_object = malloc(sizeof(i_object_t));
+  i_object_t *root_object = ALLOC(i_object_t);
   root_object->type = i_type_hash;
   root_object->data.hash = NULL;
   translations = Data_Wrap_Struct(I18nemaBackend, 0, delete_object, root_object);
