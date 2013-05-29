@@ -1,5 +1,5 @@
 #include <ruby.h>
-#include "syck.h"
+#include <syck.h>
 #include "uthash.h"
 
 VALUE I18nema = Qnil,
@@ -190,6 +190,12 @@ merge_hash(i_object_t *hash, i_object_t *other_hash)
 }
 
 static int
+delete_syck_st_entry(char *key, char *value, char *arg)
+{
+  return ST_DELETE;
+}
+
+static int
 delete_syck_object(char *key, char *value, char *arg)
 {
   i_object_t *object = (i_object_t *)value;
@@ -211,7 +217,7 @@ handle_syck_error(SyckParser *parser, const char *str)
 }
 
 static SyckNode*
-handle_syck_badanchor(SyckParser *parser, const char *anchor)
+handle_syck_badanchor(SyckParser *parser, char *anchor)
 {
   char error[strlen(anchor) + 14];
   sprintf(error, "bad anchor `%s'", anchor);
@@ -243,7 +249,7 @@ handle_syck_node(SyckParser *parser, SyckNode *node)
       i_object_t *item = NULL;
 
       oid = syck_seq_read(node, i);
-      syck_lookup_sym(parser, oid, (char **)&item);
+      syck_lookup_sym(parser, oid, (void **)&item);
       if (item->type == i_type_string)
         current_translation_count++;
       result->data.array[i] = item;
@@ -256,9 +262,9 @@ handle_syck_node(SyckParser *parser, SyckNode *node)
       i_object_t *key = NULL, *value = NULL;
 
       oid = syck_map_read(node, map_key, i);
-      syck_lookup_sym(parser, oid, (char **)&key);
+      syck_lookup_sym(parser, oid, (void **)&key);
       oid = syck_map_read(node, map_value, i);
-      syck_lookup_sym(parser, oid, (char **)&value);
+      syck_lookup_sym(parser, oid, (void **)&value);
 
       i_key_value_t *kv;
       kv = ALLOC(i_key_value_t);
@@ -301,7 +307,9 @@ load_yml_string(VALUE self, VALUE yml)
   syck_parser_error_handler(parser, handle_syck_error);
 
   oid = syck_parse(parser);
-  syck_lookup_sym(parser, oid, (char **)&new_root_object);
+  syck_lookup_sym(parser, oid, (void **)&new_root_object);
+  if (parser->syms)
+    st_foreach(parser->syms, delete_syck_st_entry, 0);
   syck_free_parser(parser);
   if (new_root_object == NULL || new_root_object->type != i_type_hash) {
     delete_object(new_root_object);

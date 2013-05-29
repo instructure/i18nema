@@ -1,3 +1,4 @@
+require 'syck'
 require 'i18n'
 require File.dirname(__FILE__) + '/i18nema/core_ext/hash'
 require File.dirname(__FILE__) + '/i18nema/i18nema'
@@ -10,6 +11,11 @@ module I18nema
       # TODO: make this moar awesome
       @initialized = true
       load_yml_string({locale => data}.deep_stringify_keys.to_yaml)
+    end
+
+    def init_translations
+      load_translations
+      @initialized = true
     end
 
   protected
@@ -31,11 +37,6 @@ module I18nema
       init_translations unless initialized?
       keys = I18n.normalize_keys(locale, key, scope, options[:separator])
       direct_lookup(*keys)
-    end
-
-    def init_translations
-      load_translations
-      @initialized = true
     end
   end
 end
