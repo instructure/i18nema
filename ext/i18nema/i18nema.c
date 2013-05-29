@@ -324,7 +324,7 @@ load_yml_string(VALUE self, VALUE yml)
 static VALUE
 available_locales(VALUE self)
 {
-  if (!rb_iv_get(self, "@initialized"))
+  if (!RTEST(rb_iv_get(self, "@initialized")))
     rb_funcall(self, rb_intern("init_translations"), 0);
   i_object_t *root_object = root_object_get(self);
   i_key_value_t *current = root_object->data.hash;
