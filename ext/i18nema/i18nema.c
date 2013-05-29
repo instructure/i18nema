@@ -40,7 +40,9 @@ typedef struct i_key_value
   UT_hash_handle hh;
 } i_key_value_t;
 
-int current_translation_count = 0;
+static int current_translation_count = 0;
+static ID s_to_s,
+          s_init_translations;
 
 static VALUE
 i_object_to_robject(i_object_t *object) {
@@ -101,10 +103,12 @@ direct_lookup(int argc, VALUE *argv, VALUE self)
 {
   i_object_t *result = root_object_get(self);;
   i_key_value_t *kv = NULL;
+  VALUE rs;
   char *s;
 
   for (int i = 0; i < argc && result != NULL && result->type == i_type_hash; i++) {
-    s = StringValueCStr(argv[i]);
+    rs = rb_funcall(argv[i], s_to_s, 0);
+    s = StringValueCStr(rs);
     HASH_FIND_STR(result->data.hash, s, kv);
     result = kv == NULL ? NULL : kv->value;
   }
@@ -333,7 +337,7 @@ static VALUE
 available_locales(VALUE self)
 {
   if (!RTEST(rb_iv_get(self, "@initialized")))
-    rb_funcall(self, rb_intern("init_translations"), 0);
+    rb_funcall(self, s_init_translations, 0);
   i_object_t *root_object = root_object_get(self);
   i_key_value_t *current = root_object->data.hash;
   VALUE ary = rb_ary_new2(0);
@@ -381,6 +385,10 @@ Init_i18nema()
   I18nema = rb_define_module("I18nema");
   I18nemaBackend = rb_define_class_under(I18nema, "Backend", rb_cObject);
   I18nemaBackendLoadError = rb_define_class_under(I18nemaBackend, "LoadError", rb_eStandardError);
+
+  s_to_s = rb_intern("to_s");
+  s_init_translations = rb_intern("init_translations");
+
   rb_define_method(I18nemaBackend, "initialize", initialize, 0);
   rb_define_method(I18nemaBackend, "load_yml_string", load_yml_string, 1);
   rb_define_method(I18nemaBackend, "available_locales", available_locales, 0);
