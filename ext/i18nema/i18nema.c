@@ -1,4 +1,5 @@
 #include <ruby.h>
+#include <ruby/encoding.h>
 #include <syck.h>
 #include "uthash.h"
 
@@ -50,7 +51,7 @@ i_object_to_robject(i_object_t *object) {
     return Qnil;
   switch (object->type) {
   case i_type_string:
-    return rb_str_new2(object->data.string);
+    return rb_enc_str_new(object->data.string, object->size, rb_utf8_encoding());
   case i_type_array:
     return array_to_rarray(object);
   case i_type_hash:
@@ -74,7 +75,7 @@ hash_to_rhash(i_object_t *hash)
   i_key_value_t *handle = hash->data.hash;
   VALUE result = rb_hash_new();
   for (; handle != NULL; handle = handle->hh.next)
-    rb_hash_aset(result, rb_str_new2(handle->key), i_object_to_robject(handle->value));
+    rb_hash_aset(result, ID2SYM(rb_intern(handle->key)), i_object_to_robject(handle->value));
   return result;
 }
 

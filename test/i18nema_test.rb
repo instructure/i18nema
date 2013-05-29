@@ -11,17 +11,17 @@ class I18nemaTest < Test::Unit::TestCase
         asdf
         qwerty
       }
-    }.deep_stringify_keys
+    }
     @backend = I18nema::Backend.new
     @backend.store_translations :en, @data
   end
 
   def test_yaml_parity
-    assert_equal({"en" => @data}, @backend.direct_lookup)
+    assert_equal({en: @data}, @backend.direct_lookup)
   end
 
   def test_scoping
-    assert_equal({"bar" => "lol"},
+    assert_equal({bar: "lol"},
                  @backend.direct_lookup("en", "foo"))
     assert_equal "lol",
                  @backend.direct_lookup("en", "foo", "bar")
