@@ -18,7 +18,13 @@ static void delete_object(struct i_object *object);
 enum i_object_type {
   i_type_string,
   i_type_array,
-  i_type_hash
+  i_type_hash,
+  i_type_int,
+  i_type_float,
+  i_type_symbol,
+  i_type_true,
+  i_type_false,
+  i_type_null
 };
 
 union i_object_data {
@@ -42,11 +48,17 @@ typedef struct i_key_value
 } i_key_value_t;
 
 static int current_translation_count = 0;
-static ID s_to_s,
-          s_init_translations;
+static ID s_init_translations,
+          s_to_f,
+          s_to_s,
+          s_to_sym;
+static i_object_t i_object_null,
+                  i_object_true,
+                  i_object_false;
 
 static VALUE
 i_object_to_robject(i_object_t *object) {
+  VALUE s;
   if (object == NULL)
     return Qnil;
   switch (object->type) {
@@ -56,8 +68,20 @@ i_object_to_robject(i_object_t *object) {
     return array_to_rarray(object);
   case i_type_hash:
     return hash_to_rhash(object);
+  case i_type_int:
+    return rb_cstr2inum(object->data.string, 10);
+  case i_type_float:
+    s = rb_str_new(object->data.string, object->size);
+    return rb_funcall(s, s_to_f, 0);
+  case i_type_symbol:
+    return ID2SYM(rb_intern(object->data.string));
+  case i_type_true:
+    return Qtrue;
+  case i_type_false:
+    return Qfalse;
+  default:
+    return Qnil;
   }
-  return Qnil;
 }
 
 static VALUE
@@ -124,9 +148,6 @@ empty_object(i_object_t *object)
     return;
 
   switch (object->type) {
-  case i_type_string:
-    xfree(object->data.string);
-    break;
   case i_type_array:
     for (unsigned long i = 0; i < object->size; i++)
       delete_object(object->data.array[i]);
@@ -135,6 +156,9 @@ empty_object(i_object_t *object)
   case i_type_hash:
     delete_hash(&object->data.hash);
     break;
+  default:
+    xfree(object->data.string);
+    break;
   }
 }
 
@@ -142,7 +166,8 @@ static void
 delete_object(i_object_t *object)
 {
   empty_object(object);
-  xfree(object);
+  if (object->type != i_type_null && object->type != i_type_true && object->type != i_type_false)
+    xfree(object);
 }
 
 static void
@@ -230,23 +255,52 @@ handle_syck_badanchor(SyckParser *parser, char *anchor)
   return NULL;
 }
 
+static i_object_t*
+new_string_object(char *str, long len)
+{
+  i_object_t *object = ALLOC(i_object_t);
+  object->type = i_type_string;
+  object->size = len;
+  object->data.string = xmalloc(len + 1);
+  strncpy(object->data.string, str, len);
+  object->data.string[len] = '\0';
+  return object;
+}
+
 static SYMID
 handle_syck_node(SyckParser *parser, SyckNode *node)
 {
   i_object_t *result;
-  result = ALLOC(i_object_t);
   SYMID oid;
 
   switch (node->kind) {
   case syck_str_kind:
-    // TODO: why does syck sometimes give us empty string nodes? (small) memory leak, since they never end up in a seq/map
-    result->type = i_type_string;
-    result->size = node->data.str->len;
-    result->data.string = xmalloc(node->data.str->len + 1);
-    strncpy(result->data.string, node->data.str->ptr, node->data.str->len);
-    result->data.string[node->data.str->len] = '\0';
+    if (node->type_id == NULL) {
+      result = new_string_object(node->data.str->ptr, node->data.str->len);
+    } else if (strcmp(node->type_id, "null") == 0) {
+      result = &i_object_null;
+    } else if (strcmp(node->type_id, "bool#yes") == 0) {
+      result = &i_object_true;
+    } else if (strcmp(node->type_id, "bool#no") == 0) {
+      result = &i_object_false;
+    } else if (strcmp(node->type_id, "int") == 0) {
+      syck_str_blow_away_commas(node);
+      result = new_string_object(node->data.str->ptr, node->data.str->len);
+      result->type = i_type_int;
+    } else if (strcmp(node->type_id, "float#fix") == 0 || strcmp(node->type_id, "float#exp") == 0) {
+      syck_str_blow_away_commas(node);
+      result = new_string_object(node->data.str->ptr, node->data.str->len);
+      result->type = i_type_float;
+    } else if (node->data.str->style == scalar_plain && node->data.str->len > 1 && strncmp(node->data.str->ptr, ":", 1) == 0) {
+      result = new_string_object(node->data.str->ptr + 1, node->data.str->len - 1);
+      result->type = i_type_symbol;
+    } else {
+      // legit strings, and everything else get the string treatment (binary, int#hex, timestamp, etc.)
+      result = new_string_object(node->data.str->ptr, node->data.str->len);
+    }
     break;
   case syck_seq_kind:
+    result = ALLOC(i_object_t);
     result->type = i_type_array;
     result->size = node->data.list->idx;
     result->data.array = ALLOC_N(i_object_t*, node->data.list->idx);
@@ -261,6 +315,7 @@ handle_syck_node(SyckParser *parser, SyckNode *node)
     }
     break;
   case syck_map_kind:
+    result = ALLOC(i_object_t);
     result->type = i_type_hash;
     result->data.hash = NULL;
     for (long i = 0; i < node->data.pairs->idx; i++) {
@@ -387,8 +442,14 @@ Init_i18nema()
   I18nemaBackend = rb_define_class_under(I18nema, "Backend", rb_cObject);
   I18nemaBackendLoadError = rb_define_class_under(I18nemaBackend, "LoadError", rb_eStandardError);
 
-  s_to_s = rb_intern("to_s");
   s_init_translations = rb_intern("init_translations");
+  s_to_f = rb_intern("to_f");
+  s_to_s = rb_intern("to_s");
+  s_to_sym = rb_intern("to_sym");
+
+  i_object_null.type = i_type_null;
+  i_object_true.type = i_type_true;
+  i_object_false.type = i_type_false;
 
   rb_define_method(I18nemaBackend, "initialize", initialize, 0);
   rb_define_method(I18nemaBackend, "load_yml_string", load_yml_string, 1);

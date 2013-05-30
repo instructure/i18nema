@@ -10,7 +10,16 @@ class I18nemaTest < Test::Unit::TestCase
       baz: %w{
         asdf
         qwerty
-      }
+      },
+      stuff: [
+        true,
+        true,
+        false,
+        nil,
+        1,
+        1.1,
+        :foo
+      ]
     }
     @backend = I18nema::Backend.new
     @backend.store_translations :en, @data
