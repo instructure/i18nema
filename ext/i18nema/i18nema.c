@@ -12,10 +12,12 @@ struct i_key_value;
 static VALUE array_to_rarray(struct i_object *array);
 static VALUE hash_to_rhash(struct i_object *hash);
 static void merge_hash(struct i_object *hash, struct i_object *other_hash);
-static void delete_hash(struct i_key_value **hash);
-static void delete_object(struct i_object *object);
+static void delete_hash(struct i_key_value **hash, int recurse);
+static void delete_object(struct i_object *object, int recurse);
+static void delete_object_r(struct i_object *object);
 
 enum i_object_type {
+  i_type_none,
   i_type_string,
   i_type_array,
   i_type_hash,
@@ -142,19 +144,22 @@ direct_lookup(int argc, VALUE *argv, VALUE self)
 }
 
 static void
-empty_object(i_object_t *object)
+empty_object(i_object_t *object, int recurse)
 {
   if (object == NULL)
     return;
 
   switch (object->type) {
   case i_type_array:
-    for (unsigned long i = 0; i < object->size; i++)
-      delete_object(object->data.array[i]);
+    if (recurse)
+      for (unsigned long i = 0; i < object->size; i++)
+        delete_object_r(object->data.array[i]);
     xfree(object->data.array);
     break;
   case i_type_hash:
-    delete_hash(&object->data.hash);
+    delete_hash(&object->data.hash, recurse);
+    break;
+  case i_type_none:
     break;
   default:
     xfree(object->data.string);
@@ -163,29 +168,35 @@ empty_object(i_object_t *object)
 }
 
 static void
-delete_object(i_object_t *object)
+delete_object(i_object_t *object, int recurse)
 {
-  empty_object(object);
+  empty_object(object, recurse);
   if (object->type != i_type_null && object->type != i_type_true && object->type != i_type_false)
     xfree(object);
+}
+
+static void
+delete_object_r(i_object_t *object)
+{
+  delete_object(object, 1);
 }
 
 static void
 delete_key_value(i_key_value_t *kv, int delete_value)
 {
   if (delete_value)
-    delete_object(kv->value);
+    delete_object_r(kv->value);
   xfree(kv->key);
   xfree(kv);
 }
 
 static void
-delete_hash(i_key_value_t **hash)
+delete_hash(i_key_value_t **hash, int recurse)
 {
   i_key_value_t *kv, *tmp;
   HASH_ITER(hh, *hash, kv, tmp) {
     HASH_DEL(*hash, kv);
-    delete_key_value(kv, 1);
+    delete_key_value(kv, recurse);
   }
 }
 
@@ -216,12 +227,16 @@ merge_hash(i_object_t *hash, i_object_t *other_hash)
     HASH_DEL(other_hash->data.hash, kv);
     add_key_value(&hash->data.hash, kv);
   }
-  delete_object(other_hash);
+  delete_object_r(other_hash);
 }
 
 static int
 delete_syck_st_entry(char *key, char *value, char *arg)
 {
+  i_object_t *object = (i_object_t *)value;
+  // key object whose string we have yoinked into a kv
+  if (object->type == i_type_none)
+    delete_object_r(object);
   return ST_DELETE;
 }
 
@@ -229,7 +244,7 @@ static int
 delete_syck_object(char *key, char *value, char *arg)
 {
   i_object_t *object = (i_object_t *)value;
-  delete_object(object);
+  delete_object(object, 0); // objects are in the syck symbol table, thus we don't want to double-free
   return ST_DELETE;
 }
 
@@ -329,7 +344,7 @@ handle_syck_node(SyckParser *parser, SyckNode *node)
       i_key_value_t *kv;
       kv = ALLOC(i_key_value_t);
       kv->key = key->data.string;
-      xfree(key);
+      key->type = i_type_none; // so we know to free this node in delete_syck_st_entry
       kv->value = value;
       if (value->type == i_type_string)
         current_translation_count++;
@@ -372,7 +387,7 @@ load_yml_string(VALUE self, VALUE yml)
     st_foreach(parser->syms, delete_syck_st_entry, 0);
   syck_free_parser(parser);
   if (new_root_object == NULL || new_root_object->type != i_type_hash) {
-    delete_object(new_root_object);
+    delete_object_r(new_root_object);
     rb_raise(I18nemaBackendLoadError, "root yml node is not a hash");
   }
   merge_hash(root_object, new_root_object);
@@ -417,7 +432,7 @@ static VALUE
 reload(VALUE self)
 {
   i_object_t *root_object = root_object_get(self);
-  empty_object(root_object);
+  empty_object(root_object, 1);
   rb_iv_set(self, "@initialized", Qfalse);
   root_object = NULL;
   return Qtrue;
@@ -430,7 +445,7 @@ initialize(VALUE self)
   i_object_t *root_object = ALLOC(i_object_t);
   root_object->type = i_type_hash;
   root_object->data.hash = NULL;
-  translations = Data_Wrap_Struct(I18nemaBackend, 0, delete_object, root_object);
+  translations = Data_Wrap_Struct(I18nemaBackend, 0, delete_object_r, root_object);
   rb_iv_set(self, "@translations", translations);
   return self;
 }

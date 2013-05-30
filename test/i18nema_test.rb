@@ -68,15 +68,11 @@ class I18nemaTest < Test::Unit::TestCase
     assert_equal("root yml node is not a hash", exception.message)
     assert_equal({}, backend.direct_lookup)
 
-    # FIXME ... ruby syck does this differently, and we get a non
-    # i_object_t as the root node, causing delete_object to asplode when
-    # it tries to free a garbage pointer
-    #
-    #exception = assert_raise(I18nema::Backend::LoadError) {
-    #  backend.load_yml_string("en:\n  foo: \"lol\"\n\tbar: notabs!")
-    #}
-    #assert_match(/TAB found in your indentation/, exception.message)
-    #assert_equal({}, backend.direct_lookup)
+    exception = assert_raise(I18nema::Backend::LoadError) {
+      backend.load_yml_string("en:\n  foo: \"lol\"\n\tbar: notabs!")
+    }
+    assert_match(/syntax error/, exception.message)
+    assert_equal({}, backend.direct_lookup)
 
     exception = assert_raise(I18nema::Backend::LoadError) {
       backend.load_yml_string("en:\n  &a [*a]")

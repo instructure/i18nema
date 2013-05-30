@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
   s.name = 'i18nema'
-  s.version = '0.0.3'
+  s.version = '0.0.4'
   s.summary = "fast i18n backend that doesn't stop up the garbage collector"
   s.description = "drop-in replacement for I18n::Backend::Simple for faster lookups and quicker gc runs. translations are stored outside of the ruby heap"
 
