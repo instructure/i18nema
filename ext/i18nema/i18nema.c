@@ -1,7 +1,7 @@
 #include <ruby.h>
 #include <ruby/encoding.h>
-#include <syck.h>
-#include "uthash.h"
+#include "vendor/syck.h"
+#include "vendor/uthash.h"
 
 VALUE I18nema = Qnil,
       I18nemaBackend = Qnil,
