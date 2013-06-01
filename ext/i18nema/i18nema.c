@@ -15,6 +15,7 @@ static void merge_hash(struct i_object *hash, struct i_object *other_hash);
 static void delete_hash(struct i_key_value **hash, int recurse);
 static void delete_object(struct i_object *object, int recurse);
 static void delete_object_r(struct i_object *object);
+static VALUE normalize_key(VALUE self, VALUE key, VALUE separator);
 
 enum i_object_type {
   i_type_none,
@@ -106,13 +107,37 @@ hash_to_rhash(i_object_t *hash)
 }
 
 static i_object_t*
-root_object_get(VALUE self)
+i_object_get(VALUE self, const char *iv)
 {
-  i_object_t *root_object;
-  VALUE translations;
-  translations = rb_iv_get(self, "@translations");
-  Data_Get_Struct(translations, i_object_t, root_object);
-  return root_object;
+  i_object_t *object;
+  VALUE wrapped;
+  wrapped = rb_iv_get(self, iv);
+  Data_Get_Struct(wrapped, i_object_t, object);
+  return object;
+}
+
+static i_object_t*
+translations_get(VALUE self)
+{
+  return i_object_get(self, "@translations");
+}
+
+static i_object_t*
+normalized_key_cache_get(VALUE self)
+{
+  return i_object_get(self, "@normalized_key_cache");
+}
+
+static i_object_t*
+hash_get(i_object_t *current, VALUE *keys, int num_keys)
+{
+  i_key_value_t *kv = NULL;
+  for (int i = 0; i < num_keys && current != NULL && current->type == i_type_hash; i++) {
+    Check_Type(keys[i], T_STRING);
+    HASH_FIND_STR(current->data.hash, StringValueCStr(keys[i]), kv);
+    current = kv == NULL ? NULL : kv->value;
+  }
+  return current;
 }
 
 /*
@@ -128,19 +153,8 @@ root_object_get(VALUE self)
 static VALUE
 direct_lookup(int argc, VALUE *argv, VALUE self)
 {
-  i_object_t *result = root_object_get(self);;
-  i_key_value_t *kv = NULL;
-  VALUE rs;
-  char *s;
-
-  for (int i = 0; i < argc && result != NULL && result->type == i_type_hash; i++) {
-    rs = rb_funcall(argv[i], s_to_s, 0);
-    s = StringValueCStr(rs);
-    HASH_FIND_STR(result->data.hash, s, kv);
-    result = kv == NULL ? NULL : kv->value;
-  }
-
-  return i_object_to_robject(result);
+  i_object_t *translations = translations_get(self);
+  return i_object_to_robject(hash_get(translations, argv, argc));
 }
 
 static void
@@ -270,16 +284,51 @@ handle_syck_badanchor(SyckParser *parser, char *anchor)
   return NULL;
 }
 
+static char*
+new_string(char *orig, long len)
+{
+  char *str = xmalloc(len + 1);
+  strncpy(str, orig, len);
+  str[len] = '\0';
+  return str;
+}
+
 static i_object_t*
 new_string_object(char *str, long len)
 {
   i_object_t *object = ALLOC(i_object_t);
   object->type = i_type_string;
   object->size = len;
-  object->data.string = xmalloc(len + 1);
-  strncpy(object->data.string, str, len);
-  object->data.string[len] = '\0';
+  object->data.string = new_string(str, len);
   return object;
+}
+
+static i_object_t*
+new_array_object(long size)
+{
+  i_object_t *object = ALLOC(i_object_t);
+  object->type = i_type_array;
+  object->size = size;
+  object->data.array = ALLOC_N(i_object_t*, size);
+  return object;
+}
+
+static i_object_t*
+new_hash_object()
+{
+  i_object_t *object = ALLOC(i_object_t);
+  object->type = i_type_hash;
+  object->data.hash = NULL;
+  return object;
+}
+
+static i_key_value_t*
+new_key_value(char *key, i_object_t *value)
+{
+  i_key_value_t *kv = ALLOC(i_key_value_t);
+  kv->key = key;
+  kv->value = value;
+  return kv;
 }
 
 static SYMID
@@ -315,10 +364,7 @@ handle_syck_node(SyckParser *parser, SyckNode *node)
     }
     break;
   case syck_seq_kind:
-    result = ALLOC(i_object_t);
-    result->type = i_type_array;
-    result->size = node->data.list->idx;
-    result->data.array = ALLOC_N(i_object_t*, node->data.list->idx);
+    result = new_array_object(node->data.list->idx);
     for (long i = 0; i < node->data.list->idx; i++) {
       i_object_t *item = NULL;
 
@@ -330,9 +376,7 @@ handle_syck_node(SyckParser *parser, SyckNode *node)
     }
     break;
   case syck_map_kind:
-    result = ALLOC(i_object_t);
-    result->type = i_type_hash;
-    result->data.hash = NULL;
+    result = new_hash_object();
     for (long i = 0; i < node->data.pairs->idx; i++) {
       i_object_t *key = NULL, *value = NULL;
 
@@ -341,11 +385,8 @@ handle_syck_node(SyckParser *parser, SyckNode *node)
       oid = syck_map_read(node, map_value, i);
       syck_lookup_sym(parser, oid, (void **)&value);
 
-      i_key_value_t *kv;
-      kv = ALLOC(i_key_value_t);
-      kv->key = key->data.string;
+      i_key_value_t *kv = new_key_value(key->data.string, value);
       key->type = i_type_none; // so we know to free this node in delete_syck_st_entry
-      kv->value = value;
       if (value->type == i_type_string)
         current_translation_count++;
       add_key_value(&result->data.hash, kv);
@@ -371,7 +412,7 @@ static VALUE
 load_yml_string(VALUE self, VALUE yml)
 {
   SYMID oid;
-  i_object_t *root_object = root_object_get(self);
+  i_object_t *root_object = translations_get(self);
   i_object_t *new_root_object = NULL;
   current_translation_count = 0;
   SyckParser* parser = syck_new_parser();
@@ -409,7 +450,7 @@ available_locales(VALUE self)
 {
   if (!RTEST(rb_iv_get(self, "@initialized")))
     rb_funcall(self, s_init_translations, 0);
-  i_object_t *root_object = root_object_get(self);
+  i_object_t *root_object = translations_get(self);
   i_key_value_t *current = root_object->data.hash;
   VALUE ary = rb_ary_new2(0);
 
@@ -431,22 +472,96 @@ available_locales(VALUE self)
 static VALUE
 reload(VALUE self)
 {
-  i_object_t *root_object = root_object_get(self);
+  i_object_t *root_object = translations_get(self);
   empty_object(root_object, 1);
   rb_iv_set(self, "@initialized", Qfalse);
-  root_object = NULL;
   return Qtrue;
+}
+
+static VALUE
+join_array_key(VALUE self, VALUE key, VALUE separator)
+{
+  long len = RARRAY_LEN(key);
+  if (len == 0)
+    return rb_str_new("", 0);
+
+  VALUE ret = rb_ary_join(normalize_key(self, RARRAY_PTR(key)[0], separator), separator);
+  for (long i = 1; i < len; i++) {
+    rb_str_concat(ret, separator);
+    rb_str_concat(ret, rb_ary_join(normalize_key(self, RARRAY_PTR(key)[i], separator), separator));
+  }
+  return ret;
+}
+
+/*
+ *  call-seq:
+ *     backend.normalize_key(key, separator) -> key
+ *
+ *  Normalizes and splits a key based on the separator.
+ *
+ *     backend.normalize_key "asdf", "."    #=> ["asdf"]
+ *     backend.normalize_key "a.b.c", "."   #=> ["a", "b", "c"]
+ *     backend.normalize_key "a.b.c", ":"   #=> ["a.b.c"]
+ *     backend.normalize_key %{a b.c}, "."  #=> ["a", "b", "c"]
+ */
+
+static VALUE
+normalize_key(VALUE self, VALUE key, VALUE separator)
+{
+  Check_Type(separator, T_STRING);
+
+  i_object_t *key_map = normalized_key_cache_get(self),
+             *sub_map = hash_get(key_map, &separator, 1);
+  if (sub_map == NULL) {
+    sub_map = new_hash_object();
+    char *key = new_string(RSTRING_PTR(separator), RSTRING_LEN(separator));
+    i_key_value_t *kv = new_key_value(key, sub_map);
+    add_key_value(&key_map->data.hash, kv);
+  }
+
+  if (TYPE(key) == T_ARRAY)
+    key = join_array_key(self, key, separator);
+  else if (TYPE(key) != T_STRING)
+    key = rb_funcall(key, s_to_s, 0);
+
+  i_object_t *key_frd = hash_get(sub_map, &key, 1);
+
+  if (key_frd == NULL) {
+    char *sep = StringValueCStr(separator);
+    VALUE parts = rb_str_split(key, sep);
+    long parts_len = RARRAY_LEN(parts),
+         skipped = 0;
+    key_frd = new_array_object(parts_len);
+    for (long i = 0; i < parts_len; i++) {
+      VALUE part = RARRAY_PTR(parts)[i];
+      // TODO: don't alloc for empty strings, since we discard them
+      if (RSTRING_LEN(part) == 0)
+        skipped++;
+      else
+        key_frd->data.array[i - skipped] = new_string_object(RSTRING_PTR(part), RSTRING_LEN(part));
+    }
+    key_frd->size -= skipped;
+
+    char *key_orig = new_string(RSTRING_PTR(key), RSTRING_LEN(key));
+    i_key_value_t *kv = new_key_value(key_orig, key_frd);
+    add_key_value(&sub_map->data.hash, kv);
+  }
+  return i_object_to_robject(key_frd);
 }
 
 static VALUE
 initialize(VALUE self)
 {
-  VALUE translations;
-  i_object_t *root_object = ALLOC(i_object_t);
-  root_object->type = i_type_hash;
-  root_object->data.hash = NULL;
+  VALUE translations, key_cache;
+
+  i_object_t *root_object = new_hash_object();
   translations = Data_Wrap_Struct(I18nemaBackend, 0, delete_object_r, root_object);
   rb_iv_set(self, "@translations", translations);
+
+  i_object_t *key_map = new_hash_object();
+  key_cache = Data_Wrap_Struct(I18nemaBackend, 0, delete_object_r, key_map);
+  rb_iv_set(self, "@normalized_key_cache", key_cache);
+
   return self;
 }
 
@@ -471,4 +586,5 @@ Init_i18nema()
   rb_define_method(I18nemaBackend, "available_locales", available_locales, 0);
   rb_define_method(I18nemaBackend, "reload!", reload, 0);
   rb_define_method(I18nemaBackend, "direct_lookup", direct_lookup, -1);
+  rb_define_method(I18nemaBackend, "normalize_key", normalize_key, 2);
 }

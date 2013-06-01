@@ -18,6 +18,30 @@ module I18nema
       @initialized = true
     end
 
+    RESERVED_KEY_MAP = Hash[I18n::RESERVED_KEYS.map{|k|[k,true]}]
+
+    def translate(locale, key, options = {})
+      raise I18n::InvalidLocale.new(locale) unless locale
+      entry = key && lookup(locale, key, options[:scope], options)
+
+      if options.empty?
+        entry = resolve(locale, key, entry, options)
+      else
+        count, default = options.values_at(:count, :default)
+        # significant speedup over Hash#except
+        values = options.reject { |key, value| RESERVED_KEY_MAP.key?(key) }
+        entry = entry.nil? && default ?
+          default(locale, key, default, options) : resolve(locale, key, entry, options)
+      end
+
+      throw(:exception, I18n::MissingTranslation.new(locale, key, options)) if entry.nil?
+      # no need to dup, since I18nema gives us a new string
+
+      entry = pluralize(locale, entry, count) if count
+      entry = interpolate(locale, entry, values) if values
+      entry
+    end
+
   protected
     def load_file(filename)
       type = File.extname(filename).tr('.', '').downcase
@@ -35,8 +59,17 @@ module I18nema
 
     def lookup(locale, key, scope = [], options = {})
       init_translations unless initialized?
-      keys = I18n.normalize_keys(locale, key, scope, options[:separator])
+      keys = normalize_keys(locale, key, scope, options[:separator])
       direct_lookup(*keys)
+    end
+
+    def normalize_keys(locale, key, scope, separator = nil)
+      separator ||= I18n.default_separator
+
+      keys = [locale.to_s]
+      keys.concat normalize_key(scope, separator) if scope && scope.size > 0
+      keys.concat normalize_key(key, separator)
+      keys
     end
   end
 end

@@ -80,4 +80,18 @@ class I18nemaTest < Test::Unit::TestCase
     assert_match(/bad anchor `a'/, exception.message)
     assert_equal({}, backend.direct_lookup)
   end
+
+  def test_normalize_key
+    backend = I18nema::Backend.new
+    assert_equal %w{asdf},
+                 backend.normalize_key("asdf", ".")
+    assert_equal %w{asdf asdf},
+                 backend.normalize_key("asdf.asdf", ".")
+    assert_equal %w{asdf.asdf},
+                 backend.normalize_key("asdf.asdf", ",")
+    assert_equal %w{asdf asdf},
+                 backend.normalize_key("asdf...asdf", ".")
+    assert_equal %w{asdf asdf asdf},
+                 backend.normalize_key(%w{asdf asdf.asdf}, ".")
+  end
 end
