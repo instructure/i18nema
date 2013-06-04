@@ -3,6 +3,8 @@
 #include "vendor/syck.h"
 #include "vendor/uthash.h"
 
+#define CAN_FREE(item) item != NULL && item->type != i_type_true && item->type != i_type_false && item->type != i_type_null
+
 VALUE I18nema = Qnil,
       I18nemaBackend = Qnil,
       I18nemaBackendLoadError = Qnil;
@@ -18,7 +20,7 @@ static void delete_object_r(struct i_object *object);
 static VALUE normalize_key(VALUE self, VALUE key, VALUE separator);
 
 enum i_object_type {
-  i_type_none,
+  i_type_unused,
   i_type_string,
   i_type_array,
   i_type_hash,
@@ -32,7 +34,7 @@ enum i_object_type {
 
 union i_object_data {
   char *string;
-  struct i_object **array;
+  struct i_object *array;
   struct i_key_value *hash;
 };
 
@@ -92,7 +94,7 @@ array_to_rarray(i_object_t *array)
 {
   VALUE result = rb_ary_new2(array->size);
   for (unsigned long i = 0; i < array->size; i++)
-    rb_ary_store(result, i, i_object_to_robject(array->data.array[i]));
+    rb_ary_store(result, i, i_object_to_robject(&array->data.array[i]));
   return result;
 }
 
@@ -167,13 +169,13 @@ empty_object(i_object_t *object, int recurse)
   case i_type_array:
     if (recurse)
       for (unsigned long i = 0; i < object->size; i++)
-        delete_object_r(object->data.array[i]);
+        empty_object(&object->data.array[i], 1);
     xfree(object->data.array);
     break;
   case i_type_hash:
     delete_hash(&object->data.hash, recurse);
     break;
-  case i_type_none:
+  case i_type_unused:
     break;
   default:
     xfree(object->data.string);
@@ -185,7 +187,7 @@ static void
 delete_object(i_object_t *object, int recurse)
 {
   empty_object(object, recurse);
-  if (object->type != i_type_null && object->type != i_type_true && object->type != i_type_false)
+  if (CAN_FREE(object))
     xfree(object);
 }
 
@@ -248,8 +250,9 @@ static int
 delete_syck_st_entry(char *key, char *value, char *arg)
 {
   i_object_t *object = (i_object_t *)value;
-  // key object whose string we have yoinked into a kv
-  if (object->type == i_type_none)
+  // key object whose string we have yoinked into a kv, or item that
+  // has been copied into an array
+  if (object->type == i_type_unused)
     delete_object_r(object);
   return ST_DELETE;
 }
@@ -293,13 +296,19 @@ new_string(char *orig, long len)
   return str;
 }
 
+static void
+set_string_object(i_object_t *object, char *str, long len)
+{
+  object->type = i_type_string;
+  object->size = len;
+  object->data.string = new_string(str, len);
+}
+
 static i_object_t*
 new_string_object(char *str, long len)
 {
   i_object_t *object = ALLOC(i_object_t);
-  object->type = i_type_string;
-  object->size = len;
-  object->data.string = new_string(str, len);
+  set_string_object(object, str, len);
   return object;
 }
 
@@ -309,7 +318,7 @@ new_array_object(long size)
   i_object_t *object = ALLOC(i_object_t);
   object->type = i_type_array;
   object->size = size;
-  object->data.array = ALLOC_N(i_object_t*, size);
+  object->data.array = ALLOC_N(i_object_t, size);
   return object;
 }
 
@@ -372,7 +381,9 @@ handle_syck_node(SyckParser *parser, SyckNode *node)
       syck_lookup_sym(parser, oid, (void **)&item);
       if (item->type == i_type_string)
         current_translation_count++;
-      result->data.array[i] = item;
+      memcpy(&result->data.array[i], item, sizeof(i_object_t));
+      if (CAN_FREE(item))
+        item->type = i_type_unused;
     }
     break;
   case syck_map_kind:
@@ -386,7 +397,7 @@ handle_syck_node(SyckParser *parser, SyckNode *node)
       syck_lookup_sym(parser, oid, (void **)&value);
 
       i_key_value_t *kv = new_key_value(key->data.string, value);
-      key->type = i_type_none; // so we know to free this node in delete_syck_st_entry
+      key->type = i_type_unused; // so we know to free this node in delete_syck_st_entry
       if (value->type == i_type_string)
         current_translation_count++;
       add_key_value(&result->data.hash, kv);
@@ -538,7 +549,7 @@ normalize_key(VALUE self, VALUE key, VALUE separator)
       if (RSTRING_LEN(part) == 0)
         skipped++;
       else
-        key_frd->data.array[i - skipped] = new_string_object(RSTRING_PTR(part), RSTRING_LEN(part));
+        set_string_object(&key_frd->data.array[i - skipped], RSTRING_PTR(part), RSTRING_LEN(part));
     }
     key_frd->size -= skipped;
 
