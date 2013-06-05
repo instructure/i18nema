@@ -4,20 +4,7 @@ require File.dirname(__FILE__) + '/i18nema/core_ext/hash'
 require File.dirname(__FILE__) + '/i18nema/i18nema'
 
 module I18nema
-  class Backend
-    include I18n::Backend::Base
-
-    def store_translations(locale, data, options = {})
-      # TODO: make this moar awesome
-      @initialized = true
-      load_yml_string({locale => data}.deep_stringify_keys.to_yaml)
-    end
-
-    def init_translations
-      load_translations
-      @initialized = true
-    end
-
+  module CoreMethods
     RESERVED_KEY_MAP = Hash[I18n::RESERVED_KEYS.map{|k|[k,true]}]
 
     def translate(locale, key, options = {})
@@ -40,6 +27,22 @@ module I18nema
       entry = pluralize(locale, entry, count) if count
       entry = interpolate(locale, entry, values) if values
       entry
+    end
+  end
+
+  class Backend
+    include I18n::Backend::Base
+    include CoreMethods # defined in a module so that other modules (e.g. I18n::Backend::Fallbacks) can override them
+
+    def store_translations(locale, data, options = {})
+      # TODO: make this moar awesome
+      @initialized = true
+      load_yml_string({locale => data}.deep_stringify_keys.to_yaml)
+    end
+
+    def init_translations
+      load_translations
+      @initialized = true
     end
 
   protected

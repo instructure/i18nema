@@ -3,7 +3,7 @@
 Fast I18n backend to keep things running smoothly.
 
 I18nema is a drop-in replacement for I18n::Backend::Simple, for faster
-lookups (2x!) and quicker GC runs (ymmv). Translations are stored
+lookups (15-20%) and quicker GC runs (ymmv). Translations are stored
 outside of the ruby heap, and lookups happen in C (rather than the usual
 inject on nested ruby hashes).
 
@@ -52,13 +52,13 @@ is nicer on ObjectSpace than vanilla I18n.
 
 ### Faster Translation Lookups
 
-Simple lookups (i.e. no options or interpolation) take about 55% less
-time, and that holds true no matter how deeply scoped your keys are
-(e.g. `foo.bar.baz.lol`).
+Simple lookups (i.e. no options or interpolation) take a bit over 15%
+less time.
 
-Lookups with options are also faster (about 35% less time). The gains
-aren't quite as big there yet, since proportionally more of the time is
-spent in unoptimized places like `I18n#interpolate`.
+Lookups with options see slightly bigger gains (over 20% less time), in
+part due to some speedups on the ruby side of things (I18n uses
+`Hash#except`, which is quite slow when you have a long list of
+arguments).
 
 ## Show me the benchmarks
 
@@ -72,37 +72,36 @@ e.g. `I18n.t('foo') -> 1`, `I18n.t('foo.bar') -> 2`
 #### I18nema
 
                         user     system      total        real
-    translate(1):   0.960000   0.010000   0.970000 (  0.963384)
-    translate(2):   1.070000   0.010000   1.080000 (  1.068789)
-    translate(3):   1.080000   0.000000   1.080000 (  1.083826)
-    translate(4):   1.260000   0.010000   1.270000 (  1.263967)
+    translate(1):   0.900000   0.010000   0.910000 (  0.910228)
+    translate(2):   1.010000   0.010000   1.020000 (  1.009545)
+    translate(3):   1.020000   0.010000   1.030000 (  1.028098)
+    translate(4):   1.210000   0.000000   1.210000 (  1.214737)
 
 #### I18n
 
                         user     system      total        real
-    translate(1):   2.140000   0.000000   2.140000 (  2.137579)
-    translate(2):   2.380000   0.000000   2.380000 (  2.382720)
-    translate(3):   2.420000   0.000000   2.420000 (  2.428245)
-    translate(4):   2.510000   0.000000   2.510000 (  2.514133)
+    translate(1):   1.000000   0.000000   1.000000 (  1.007367)
+    translate(2):   1.260000   0.000000   1.260000 (  1.268323)
+    translate(3):   1.320000   0.000000   1.320000 (  1.315132)
+    translate(4):   1.390000   0.010000   1.400000 (  1.393478)
 
 ### `translate` with options (locale, interpolation)
 
 #### I18nema
 
                         user     system      total        real
-    translate(1):   1.770000   0.000000   1.770000 (  1.771934)
-    translate(2):   1.870000   0.010000   1.880000 (  1.880586)
-    translate(3):   1.890000   0.000000   1.890000 (  1.893065)
-    translate(4):   2.080000   0.000000   2.080000 (  2.083093)
+    translate(1):   0.950000   0.000000   0.950000 (  0.943904)
+    translate(2):   1.040000   0.000000   1.040000 (  1.036595)
+    translate(3):   1.060000   0.010000   1.070000 (  1.059588)
+    translate(4):   1.240000   0.000000   1.240000 (  1.237322)
 
 #### I18n
 
                         user     system      total        real
-    translate(1):   2.720000   0.000000   2.720000 (  2.720541)
-    translate(2):   2.950000   0.010000   2.960000 (  2.953175)
-    translate(3):   3.010000   0.010000   3.020000 (  3.028288)
-    translate(4):   3.120000   0.010000   3.130000 (  3.117135)
-
+    translate(1):   1.090000   0.000000   1.090000 (  1.099866)
+    translate(2):   1.360000   0.000000   1.360000 (  1.364869)
+    translate(3):   1.430000   0.000000   1.430000 (  1.425103)
+    translate(4):   1.500000   0.010000   1.510000 (  1.500952)
 
 ## OK, so what's the catch?
 
