@@ -1,3 +1,4 @@
+require 'yaml' if RUBY_VERSION >= "2.0" # otherwise syck asplodes
 require 'syck'
 require 'i18n'
 require File.dirname(__FILE__) + '/i18nema/core_ext/hash'

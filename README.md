@@ -9,15 +9,21 @@ inject on nested ruby hashes).
 
 ## How do I use it?
 
-    gem 'i18nema'
+```ruby
+gem 'i18nema' # or 'i18nema19' if you're on Ruby 1.9
+```
 
 and then do something like this in an initializer:
 
-    I18n.backend = I18nema::Backend.new
+```ruby
+I18n.backend = I18nema::Backend.new
+```
 
 You can pull in additional features, e.g.
 
-    I18nema::Backend.send(:include, I18n::Backend::Fallbacks)
+```ruby
+I18nema::Backend.send(:include, I18n::Backend::Fallbacks)
+```
 
 As with regular I18n, you should probably load translations before you
 fork, so that all processes can use the same translations in memory. In
