@@ -99,9 +99,12 @@ class I18nemaTest < Test::Unit::TestCase
     backend = I18nema::Backend.new
     syck_nil_key = "--- \n~: \n"
     psych_nil_key = "---\n! '': \n"
+    syck_nil_key_with_value = "---\n~: value\n"
     result = backend.load_yml_string(syck_nil_key)
     assert_equal result, 0
     result = backend.load_yml_string(psych_nil_key)
+    assert_equal result, 0
+    result = backend.load_yml_string(syck_nil_key_with_value)
     assert_equal result, 0
   end
 
