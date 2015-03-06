@@ -396,8 +396,9 @@ handle_syck_node(SyckParser *parser, SyckNode *node)
       oid = syck_map_read(node, map_value, i);
       syck_lookup_sym(parser, oid, (void **)&value);
 
-      if (value->type == i_type_null)
+      if (key->type == i_type_null) {
         continue;
+      }
       i_key_value_t *kv = new_key_value(key->data.string, value);
       key->type = i_type_unused; // so we know to free this node in delete_syck_st_entry
       if (value->type == i_type_string)
