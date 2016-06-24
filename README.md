@@ -36,7 +36,7 @@ an initializer, just do `I18n.backend.init_translations`.
 Loading all the translations into memory is dramatically faster with
 I18nema (about 4x). While this is just a one time hit, it's pretty
 noticeable when you're waiting on it (e.g. console, specs). In
-[canvas-lms](https://github/com/instructure/canvas-lms), I18nema brings
+[canvas-lms](https://github.com/instructure/canvas-lms), I18nema brings
 it down to just over half a second (from almost 2.5).
 
 ### Faster GC Runs
@@ -47,7 +47,7 @@ translations you have versus how many other ruby objects. Applications
 that are localized in more languages should see a bigger boost (since
 the translations make up a bigger share of the original ObjectSpace).
 
-For example, [canvas-lms](https://github/com/instructure/canvas-lms) is
+For example, [canvas-lms](https://github.com/instructure/canvas-lms) is
 translated into seven other languages, and I18nema reduces (startup)
 ObjectSpace by about 18% and GC runtime by about 11%.
 
