@@ -94,4 +94,18 @@ class I18nemaTest < Test::Unit::TestCase
     assert_equal %w{asdf asdf asdf},
                  backend.normalize_key(%w{asdf asdf.asdf}, ".")
   end
+
+  def test_skip_nil_keys
+    backend = I18nema::Backend.new
+    syck_nil_key = "--- \n~: \n"
+    psych_nil_key = "---\n! '': \n"
+    syck_nil_key_with_value = "---\n~: value\n"
+    result = backend.load_yml_string(syck_nil_key)
+    assert_equal result, 0
+    result = backend.load_yml_string(psych_nil_key)
+    assert_equal result, 0
+    result = backend.load_yml_string(syck_nil_key_with_value)
+    assert_equal result, 0
+  end
+
 end
