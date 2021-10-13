@@ -15,7 +15,7 @@ Gem::Specification.new do |s|
 
   s.extensions = ['ext/i18nema/extconf.rb']
   s.files = %w(Rakefile README.md) + Dir['ext/**/*.{c,h,rb}'] + Dir['lib/**/*.rb'] + Dir['test/**/*.rb']
-  s.add_dependency('syck', '~> 1.0.0') unless RUBYONEX
+  s.add_dependency('syck', '~> 1.0') unless RUBYONEX
   s.add_dependency('i18n', '>= 0.5')
   s.add_development_dependency('rake-compiler', '~> 0.8.0')
 end
